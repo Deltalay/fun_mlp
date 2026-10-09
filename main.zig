@@ -13,7 +13,7 @@ pub fn main(init: std.process.Init) !void {
     var hidden_layer = try mlp.init(alloc, .{ .activation = .relu, .layer_size = 4, .input_size = 2, .bias = .random }, &seed);
     var output_layer = try mlp.init(alloc, .{ .activation = .softmax, .layer_size = 2, .input_size = 4, .bias = .random }, &seed);
     var input_item: [2]f32 = [2]f32{ 1.0, 0.0 };
-    var target_item: [2] f32 = [2]f32{0.0, 1.0};
+    var target_item: [2]f32 = [2]f32{ 0.0, 1.0 };
     _ = hidden_layer.forward(&input_item);
     _ = output_layer.forward(hidden_layer.output);
     std.debug.print("HIDDEN LAYER\n", .{});
@@ -27,6 +27,46 @@ pub fn main(init: std.process.Init) !void {
     }
     const loss = output_layer.CELoss(&target_item);
     std.debug.print("CE Loss: {}\n", .{loss});
+    const dz = try output_layer.calculate_dz(&target_item);
+    defer alloc.free(dz);
+    const output_dw = try output_layer.calculate_dw(
+        dz,
+        hidden_layer.output,
+    );
+    defer alloc.free(output_dw);
+    const d_hidden = try output_layer.calculate_d_hidden(
+        dz,
+        hidden_layer.output.len,
+        &hidden_layer
+    );
+    defer alloc.free(d_hidden);
+    const hidden_dw = try hidden_layer.calculate_dw(
+        d_hidden,
+        &input_item,
+    );
+    defer alloc.free(hidden_dw);
+    const learning_rate: f32 = 0.1;
+
+    for (0..output_layer.weight.len) |i| {
+        output_layer.weight[i] -= learning_rate * output_dw[i];
+    }
+
+    for (0..hidden_layer.weight.len) |i| {
+        hidden_layer.weight[i] -= learning_rate * hidden_dw[i];
+    }
+    _ = hidden_layer.forward(&input_item);
+    _ = output_layer.forward(hidden_layer.output);
+    std.debug.print("HIDDEN LAYER\n", .{});
+    for (0..4) |index| {
+        std.debug.print("{}\n", .{hidden_layer.output[index]});
+    }
+
+    std.debug.print("OUTPUT LAYER\n", .{});
+    for (0..2) |index| {
+        std.debug.print("{}\n", .{output_layer.output[index]});
+    }
+    const loss2 = output_layer.CELoss(&target_item);
+    std.debug.print("CE Loss 2: {}\n", .{loss2});
 }
 pub const ActivationType = enum { relu, sigmoid, softmax, none };
 pub const BiasInit = enum {
@@ -130,17 +170,52 @@ pub const mlp = struct {
         }
     }
     pub fn CELoss(self: *mlp, X: []f32) f32 {
-        var loss : f32 = 0.0;
+        var loss: f32 = 0.0;
         for (0..self.option.layer_size) |index| {
-            loss += X[index]*@log(self.output[index]);
+            loss += X[index] * @log(self.output[index]);
         }
         return -loss;
     }
-    pub fn backward(self: *mlp, Y: []f32) f32 {
-        var dz: []f32 = self.alloc.alloc(f32, self.option.layer_size);
-        for (0..self.option.layer_size) |index| {
-            dz[index] = self.output[index] - Y[index];
-        }
-    }
+   
+    pub fn calculate_d_hidden(
+        self: *mlp,
+        dz: []const f32,
+        hidden_size: usize,
+        hidden_layer: *mlp,
+    ) ![]f32 {
+        const d_hidden = try self.alloc.alloc(f32, hidden_size);
 
+        for (0..hidden_size) |i| {
+            var sum: f32 = 0.0;
+
+            for (0..self.option.layer_size) |j| {
+                const weight_index = j * hidden_size + i;
+                sum += self.weight[weight_index] * dz[j];
+            }
+
+            d_hidden[i] = sum * d_relu(hidden_layer.output[i]);
+        }
+
+        return d_hidden;
+    }
+    pub fn calculate_dw(self: *mlp, dz: []const f32, h_out: []const f32) ![]f32 {
+        const dw = try self.alloc.alloc(f32, self.weight.len);
+
+        for (0..self.option.layer_size) |j| {
+            for (0..h_out.len) |i| {
+                const weight_index = j * h_out.len + i;
+                dw[weight_index] = dz[j] * h_out[i];
+            }
+        }
+
+        return dw;
+    }
+    pub fn calculate_dz(self: *mlp, target: []f32) ![]f32 {
+        // memory leak, fix later
+        var dz: []f32 = try self.alloc.alloc(f32, self.option.layer_size);
+        for (0..self.option.layer_size) |index| {
+            dz[index] = self.output[index] - target[index];
+        }
+        return dz;
+    }
 };
