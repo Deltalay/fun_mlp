@@ -3,12 +3,6 @@ const math = std.math;
 const Io = std.Io;
 pub fn main(init: std.process.Init) !void {
     const alloc = init.arena.allocator();
-
-    // const input_option = MlpOption{
-    //     .activation = .none,
-    //     .layer_size = 2,
-    //     .bias = .zero,
-    // };
     const seed: [32]u8 = "12345678901234567890123456789012".*;
     var hidden_layer = try mlp.init(alloc, .{ .activation = .relu, .layer_size = 4, .input_size = 2, .bias = .random }, &seed);
     var output_layer = try mlp.init(alloc, .{ .activation = .softmax, .layer_size = 2, .input_size = 4, .bias = .random }, &seed);
@@ -25,48 +19,46 @@ pub fn main(init: std.process.Init) !void {
     for (0..2) |index| {
         std.debug.print("{}\n", .{output_layer.output[index]});
     }
-    const loss = output_layer.CELoss(&target_item);
+    var loss = output_layer.CELoss(&target_item);
     std.debug.print("CE Loss: {}\n", .{loss});
-    const dz = try output_layer.calculate_dz(&target_item);
-    defer alloc.free(dz);
-    const output_dw = try output_layer.calculate_dw(
-        dz,
-        hidden_layer.output,
-    );
-    defer alloc.free(output_dw);
-    const d_hidden = try output_layer.calculate_d_hidden(
-        dz,
-        hidden_layer.output.len,
-        &hidden_layer
-    );
-    defer alloc.free(d_hidden);
-    const hidden_dw = try hidden_layer.calculate_dw(
-        d_hidden,
-        &input_item,
-    );
-    defer alloc.free(hidden_dw);
-    const learning_rate: f32 = 0.1;
+    for (0..15) |step| {
+        const dz = try output_layer.calculate_dz(&target_item);
+        defer alloc.free(dz);
+        const output_dw = try output_layer.calculate_dw(
+            dz,
+            hidden_layer.output,
+        );
+        defer alloc.free(output_dw);
+        const d_hidden = try output_layer.calculate_d_hidden(dz, hidden_layer.output.len, &hidden_layer);
+        defer alloc.free(d_hidden);
+        const hidden_dw = try hidden_layer.calculate_dw(
+            d_hidden,
+            &input_item,
+        );
+        defer alloc.free(hidden_dw);
+        const learning_rate: f32 = 0.1;
 
-    for (0..output_layer.weight.len) |i| {
-        output_layer.weight[i] -= learning_rate * output_dw[i];
-    }
+        for (0..output_layer.weight.len) |i| {
+            output_layer.weight[i] -= learning_rate * output_dw[i];
+        }
 
-    for (0..hidden_layer.weight.len) |i| {
-        hidden_layer.weight[i] -= learning_rate * hidden_dw[i];
-    }
-    _ = hidden_layer.forward(&input_item);
-    _ = output_layer.forward(hidden_layer.output);
-    std.debug.print("HIDDEN LAYER\n", .{});
-    for (0..4) |index| {
-        std.debug.print("{}\n", .{hidden_layer.output[index]});
-    }
+        for (0..hidden_layer.weight.len) |i| {
+            hidden_layer.weight[i] -= learning_rate * hidden_dw[i];
+        }
+        _ = hidden_layer.forward(&input_item);
+        _ = output_layer.forward(hidden_layer.output);
+        std.debug.print("HIDDEN LAYER\n", .{});
+        for (0..4) |index| {
+            std.debug.print("{}\n", .{hidden_layer.output[index]});
+        }
 
-    std.debug.print("OUTPUT LAYER\n", .{});
-    for (0..2) |index| {
-        std.debug.print("{}\n", .{output_layer.output[index]});
+        std.debug.print("OUTPUT LAYER\n", .{});
+        for (0..2) |index| {
+            std.debug.print("{}\n", .{output_layer.output[index]});
+        }
+        loss = output_layer.CELoss(&target_item);
+        std.debug.print("CE Loss {}: {}\n", .{step, loss});
     }
-    const loss2 = output_layer.CELoss(&target_item);
-    std.debug.print("CE Loss 2: {}\n", .{loss2});
 }
 pub const ActivationType = enum { relu, sigmoid, softmax, none };
 pub const BiasInit = enum {
@@ -176,7 +168,7 @@ pub const mlp = struct {
         }
         return -loss;
     }
-   
+
     pub fn calculate_d_hidden(
         self: *mlp,
         dz: []const f32,
